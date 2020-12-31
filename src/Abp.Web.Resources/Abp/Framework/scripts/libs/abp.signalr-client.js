@@ -11,6 +11,9 @@ var abp = abp || {};
     abp.signalr.hubs = abp.signalr.hubs || {};
     abp.signalr.reconnectTime = abp.signalr.reconnectTime || 5000;
     abp.signalr.maxTries = abp.signalr.maxTries || 8;
+    abp.signalr.increaseReconnectTime = abp.signalr.increaseReconnectTime || function (time) {
+        return time * 2;
+    };
 
     // Configure the connection for abp.signalr.hubs.common
     function configureConnection(connection) {
@@ -22,19 +25,22 @@ var abp = abp || {};
 
         // Reconnect loop
         function tryReconnect() {
-            if (tries > abp.signalr.maxTries) {
-                return;
-            } else {
+            if (tries <= abp.signalr.maxTries) {
                 connection.start()
-                    .then(() => {
+                    .then(function () {
                         reconnectTime = abp.signalr.reconnectTime;
                         tries = 1;
                         console.log('Reconnected to SignalR server!');
-                    }).catch(() => {
-                        tries += 1;
-                        reconnectTime *= 2;
-                        setTimeout(() => tryReconnect(), reconnectTime);
-                    });
+                        abp.event.trigger('abp.signalr.reconnected');
+                    }).catch(function () {
+                    tries += 1;
+                    reconnectTime = abp.signalr.increaseReconnectTime(reconnectTime);
+                    setTimeout(function () {
+                            tryReconnect()
+                        },
+                        reconnectTime
+                    );
+                });
             }
         }
 
@@ -49,7 +55,8 @@ var abp = abp || {};
             if (!abp.signalr.autoReconnect) {
                 return;
             }
-
+            
+            abp.event.trigger('abp.signalr.disconnected');
             tryReconnect();
         });
 

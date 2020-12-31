@@ -6,6 +6,7 @@ using Abp.Authorization.Roles;
 using Abp.Authorization.Users;
 using Abp.BackgroundJobs;
 using Abp.Configuration;
+using Abp.DynamicEntityProperties;
 using Abp.EntityHistory;
 using Abp.Localization;
 using Abp.MultiTenancy;
@@ -17,7 +18,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Abp.Zero.EntityFrameworkCore
 {
     /// <summary>
-    /// Extension methods for <see cref="DbModelBuilder"/>.
+    /// Extension methods for <see cref="ModelBuilder"/>.
     /// </summary>
     public static class AbpZeroDbModelBuilderExtensions
     {
@@ -45,12 +46,16 @@ namespace Abp.Zero.EntityFrameworkCore
             SetTableName<EntityChangeSet>(modelBuilder, prefix + "EntityChangeSets", schemaName);
             SetTableName<EntityPropertyChange>(modelBuilder, prefix + "EntityPropertyChanges", schemaName);
             SetTableName<FeatureSetting>(modelBuilder, prefix + "Features", schemaName);
+            SetTableName<EditionFeatureSetting>(modelBuilder, prefix + "Features", schemaName);
+            SetTableName<TenantFeatureSetting>(modelBuilder, prefix + "Features", schemaName);
             SetTableName<ApplicationLanguage>(modelBuilder, prefix + "Languages", schemaName);
             SetTableName<ApplicationLanguageText>(modelBuilder, prefix + "LanguageTexts", schemaName);
             SetTableName<NotificationInfo>(modelBuilder, prefix + "Notifications", schemaName);
             SetTableName<NotificationSubscriptionInfo>(modelBuilder, prefix + "NotificationSubscriptions", schemaName);
             SetTableName<OrganizationUnit>(modelBuilder, prefix + "OrganizationUnits", schemaName);
             SetTableName<PermissionSetting>(modelBuilder, prefix + "Permissions", schemaName);
+            SetTableName<RolePermissionSetting>(modelBuilder, prefix + "Permissions", schemaName);
+            SetTableName<UserPermissionSetting>(modelBuilder, prefix + "Permissions", schemaName);
             SetTableName<TRole>(modelBuilder, prefix + "Roles", schemaName);
             SetTableName<Setting>(modelBuilder, prefix + "Settings", schemaName);
             SetTableName<TTenant>(modelBuilder, prefix + "Tenants", schemaName);
@@ -69,6 +74,10 @@ namespace Abp.Zero.EntityFrameworkCore
             SetTableName<WebhookEvent>(modelBuilder, prefix + "WebhookEvents", schemaName);
             SetTableName<WebhookSubscriptionInfo>(modelBuilder, prefix + "WebhookSubscriptions", schemaName);
             SetTableName<WebhookSendAttempt>(modelBuilder, prefix + "WebhookSendAttempts", schemaName);
+            SetTableName<DynamicProperty>(modelBuilder, prefix + "DynamicProperties", schemaName);
+            SetTableName<DynamicPropertyValue>(modelBuilder, prefix + "DynamicPropertyValues", schemaName);
+            SetTableName<DynamicEntityProperty>(modelBuilder, prefix + "DynamicEntityProperties", schemaName);
+            SetTableName<DynamicEntityPropertyValue>(modelBuilder, prefix + "DynamicEntityPropertyValues", schemaName);
         }
 
         internal static void SetTableName<TEntity>(this ModelBuilder modelBuilder, string tableName, string schemaName)

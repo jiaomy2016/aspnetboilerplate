@@ -3,6 +3,7 @@ using Abp.Auditing;
 using Abp.BackgroundJobs;
 using Abp.Configuration.Startup;
 using Abp.Domain.Uow;
+using Abp.DynamicEntityProperties;
 using Abp.EntityHistory;
 using Abp.Localization;
 using Abp.Modules;
@@ -45,8 +46,10 @@ namespace Abp.Dependency.Installers
                 Component.For<IAbpModuleManager, AbpModuleManager>().ImplementedBy<AbpModuleManager>().LifestyleSingleton(),
                 Component.For<IAssemblyFinder, AbpAssemblyFinder>().ImplementedBy<AbpAssemblyFinder>().LifestyleSingleton(),
                 Component.For<ILocalizationManager, LocalizationManager>().ImplementedBy<LocalizationManager>().LifestyleSingleton(),
-                Component.For<IWebhooksConfiguration, WebhooksConfiguration>().ImplementedBy<WebhooksConfiguration>().LifestyleSingleton()
-                );
+                Component.For<IWebhooksConfiguration, WebhooksConfiguration>().ImplementedBy<WebhooksConfiguration>().LifestyleSingleton(),
+                Component.For<IDynamicEntityPropertyDefinitionContext, DynamicEntityPropertyDefinitionContext>().ImplementedBy<DynamicEntityPropertyDefinitionContext>().LifestyleTransient(),
+                Component.For<IDynamicEntityPropertyConfiguration, DynamicEntityPropertyConfiguration>().ImplementedBy<DynamicEntityPropertyConfiguration>().LifestyleSingleton()
+            );
         }
     }
 }

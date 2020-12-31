@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <Import Project="..\..\common.props" />
+  <Import Project="..\..\configureawait.props" />
 
   <PropertyGroup>
     <TargetFramework>net461</TargetFramework>
@@ -20,13 +21,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="bin\Release\net461\Abp.Web.Api.pdb">
-      <PackagePath>lib/net461/</PackagePath>
-      <Pack>true</Pack>
-    </None>
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\Abp.Web\Abp.Web.csproj" />
   </ItemGroup>
 
@@ -40,10 +34,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNet.WebApi" Version="5.2.7" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Update="SourceLink.Create.CommandLine" Version="2.8.3" />
   </ItemGroup>
 
 </Project>

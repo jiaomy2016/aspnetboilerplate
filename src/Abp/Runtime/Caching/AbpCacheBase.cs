@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Threading;
+using Abp.Data;
+using Abp.Threading.Extensions;
 using Castle.Core.Logging;
-using Nito.AsyncEx;
 
 namespace Abp.Runtime.Caching
 {
@@ -15,11 +17,9 @@ namespace Abp.Runtime.Caching
     {
         public TimeSpan DefaultSlidingExpireTime { get; set; }
 
-        public TimeSpan? DefaultAbsoluteExpireTime { get; set; }
+        public DateTimeOffset? DefaultAbsoluteExpireTime { get; set; }
 
-        protected readonly object SyncObj = new object();
-
-        protected readonly AsyncLock AsyncLock = new AsyncLock();
+        protected readonly SemaphoreSlim SemaphoreSlim = new SemaphoreSlim(1, 1);
 
         /// <summary>
         /// Constructor.
@@ -32,106 +32,86 @@ namespace Abp.Runtime.Caching
 
         public virtual TValue Get(TKey key, Func<TKey, TValue> factory)
         {
-            TValue item = default(TValue);
-
-            try
+            if (TryGetValue(key, out TValue value))
             {
-                item = GetOrDefault(key);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(ex.ToString(), ex);
+                return value;
             }
 
-            if (item == null)
+            using (SemaphoreSlim.Lock())
             {
-                lock (SyncObj)
+                if (TryGetValue(key, out value))
+                {
+                    return value;
+                }
+
+                var generatedValue = factory(key);
+                if (!IsDefaultValue(generatedValue))
                 {
                     try
                     {
-                        item = GetOrDefault(key);
+                        Set(key, generatedValue);
                     }
                     catch (Exception ex)
                     {
                         Logger.Error(ex.ToString(), ex);
                     }
-
-                    if (item == null)
-                    {
-                        item = factory(key);
-
-                        if (item == null)
-                        {
-                            return default(TValue);
-                        }
-
-                        try
-                        {
-                            Set(key, item);
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Error(ex.ToString(), ex);
-                        }
-                    }
                 }
+                return generatedValue;
             }
-
-            return item;
         }
 
         public virtual TValue[] Get(TKey[] keys, Func<TKey, TValue> factory)
         {
-            TValue[] items = null;
-
+            ConditionalValue<TValue>[] results = null;
             try
             {
-                items = GetOrDefault(keys);
+                results = TryGetValues(keys);
             }
             catch (Exception ex)
             {
                 Logger.Error(ex.ToString(), ex);
             }
 
-            if (items == null)
+            if (results == null)
             {
-                items = new TValue[keys.Length];
+                results = new ConditionalValue<TValue>[keys.Length];
             }
 
-            if (items.Any(i => i == null))
+            if (results.Any(result => !result.HasValue))
             {
-                lock (SyncObj)
+                using (SemaphoreSlim.Lock())
                 {
                     try
                     {
-                        items = GetOrDefault(keys);
+                        results = TryGetValues(keys);
                     }
                     catch (Exception ex)
                     {
                         Logger.Error(ex.ToString(), ex);
                     }
 
-                    var fetched = new List<KeyValuePair<TKey, TValue>>();
-                    for (var i = 0; i < items.Length; i++)
+                    var generated = new List<KeyValuePair<TKey, TValue>>();
+                    for (var i = 0; i < results.Length; i++)
                     {
-                        TKey key = keys[i];
-                        TValue value = items[i];
-                        if (value == null)
+                        var result = results[i];
+                        if (!result.HasValue)
                         {
-                            value = factory(key);
-                        }
+                            var key = keys[i];
+                            var generatedValue = factory(key);
+                            results[i] = new ConditionalValue<TValue>(true, generatedValue);
 
-                        if (value != null)
-                        {
-                            fetched.Add(new KeyValuePair<TKey, TValue>(key, value));
+                            if (!IsDefaultValue(generatedValue))
+                            {
+                                generated.Add(new KeyValuePair<TKey, TValue>(key, generatedValue));
+                            }
                         }
                     }
 
-                    if (fetched.Any())
+                    if (generated.Any())
                     {
                         try
                         {
-                            Set(fetched.ToArray());
+                            Set(generated.ToArray());
                         }
                         catch (Exception ex)
                         {
@@ -141,111 +121,119 @@ namespace Abp.Runtime.Caching
                 }
             }
 
-            return items;
+            return results.Select(result => result.Value).ToArray();
+        }
+
+        protected virtual bool IsDefaultValue(TValue value)
+        {
+            return EqualityComparer<TValue>.Default.Equals(value, default);
         }
 
         public virtual async Task<TValue> GetAsync(TKey key, Func<TKey, Task<TValue>> factory)
         {
-            TValue item = default(TValue);
+            ConditionalValue<TValue> result = default;
 
             try
             {
-                item = await GetOrDefaultAsync(key);
+                result = await TryGetValueAsync(key);
             }
             catch (Exception ex)
             {
                 Logger.Error(ex.ToString(), ex);
             }
 
-            if (item == null)
+            if (result.HasValue)
             {
-                using (await AsyncLock.LockAsync())
-                {
-                    try
-                    {
-                        item = await GetOrDefaultAsync(key);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Error(ex.ToString(), ex);
-                    }
-
-                    if (item == null)
-                    {
-                        item = await factory(key);
-
-                        if (item == null)
-                        {
-                            return default(TValue);
-                        }
-
-                        try
-                        {
-                            await SetAsync(key, item);
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Error(ex.ToString(), ex);
-                        }
-                    }
-                }
+                return result.Value;
             }
 
-            return item;
+            using (await SemaphoreSlim.LockAsync())
+            {
+                try
+                {
+                    result = await TryGetValueAsync(key);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex.ToString(), ex);
+                }
+
+                if (result.HasValue)
+                {
+                    return result.Value;
+                }
+
+                var generatedValue = await factory(key);
+                if (IsDefaultValue(generatedValue))
+                {
+                    return generatedValue;
+                }
+
+                try
+                {
+                    await SetAsync(key, generatedValue);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex.ToString(), ex);
+                }
+
+                return generatedValue;
+            }
         }
 
         public virtual async Task<TValue[]> GetAsync(TKey[] keys, Func<TKey, Task<TValue>> factory)
         {
-            TValue[] items = null;
+            ConditionalValue<TValue>[] results = null;
 
             try
             {
-                items = await GetOrDefaultAsync(keys);
+                results = await TryGetValuesAsync(keys);
             }
             catch (Exception ex)
             {
                 Logger.Error(ex.ToString(), ex);
             }
 
-            if (items == null)
+            if (results == null)
             {
-                items = new TValue[keys.Length];
+                results = new ConditionalValue<TValue>[keys.Length];
             }
 
-            if (items.Any(i => i == null))
+            if (results.Any(result => !result.HasValue))
             {
-                using (await AsyncLock.LockAsync())
+                using (await SemaphoreSlim.LockAsync())
                 {
                     try
                     {
-                        items = await GetOrDefaultAsync(keys);
+                        results = await TryGetValuesAsync(keys);
                     }
                     catch (Exception ex)
                     {
                         Logger.Error(ex.ToString(), ex);
                     }
 
-                    var fetched = new List<KeyValuePair<TKey, TValue>>();
-                    for (var i = 0; i < items.Length; i++)
+                    var generated = new List<KeyValuePair<TKey, TValue>>();
+                    for (var i = 0; i < results.Length; i++)
                     {
-                        TKey key = keys[i];
-                        TValue value = items[i];
-                        if (value == null)
+                        var result = results[i];
+                        if (!result.HasValue)
                         {
-                            value = await factory(key);
-                        }
-
-                        if (value != null)
-                        {
-                            fetched.Add(new KeyValuePair<TKey, TValue>(key, value));
+                            var key = keys[i];
+                            var generatedValue = await factory(key);
+                            if (!IsDefaultValue(generatedValue))
+                            {
+                                generated.Add(new KeyValuePair<TKey, TValue>(key, generatedValue));
+                            }
+                            results[i] = new ConditionalValue<TValue>(true, generatedValue);
                         }
                     }
 
-                    if (fetched.Any())
+                    if (generated.Any())
                     {
                         try
                         {
-                            await SetAsync(fetched.ToArray());
+                            await SetAsync(generated.ToArray());
                         }
                         catch (Exception ex)
                         {
@@ -255,29 +243,60 @@ namespace Abp.Runtime.Caching
                 }
             }
 
-            return items;
+            return results.Select(result => result.Value).ToArray();
         }
 
-        public abstract TValue GetOrDefault(TKey key);
+        public abstract bool TryGetValue(TKey key, out TValue value);
+
+        public virtual ConditionalValue<TValue>[] TryGetValues(TKey[] keys)
+        {
+            var pairs = new List<ConditionalValue<TValue>>();
+            foreach (var key in keys)
+            {
+                var found = TryGetValue(key, out TValue value);
+                pairs.Add(new ConditionalValue<TValue>(found, value));
+            }
+            return pairs.ToArray();
+        }
+
+        public virtual Task<ConditionalValue<TValue>> TryGetValueAsync(TKey key)
+        {
+            var found = TryGetValue(key, out TValue value);
+            return Task.FromResult(new ConditionalValue<TValue>(found, value));
+        }
+
+        public virtual Task<ConditionalValue<TValue>[]> TryGetValuesAsync(TKey[] keys)
+        {
+            return Task.FromResult(TryGetValues(keys));
+        }
+
+        public virtual TValue GetOrDefault(TKey key)
+        {
+            TryGetValue(key, out TValue value);
+            return value;
+        }
 
         public virtual TValue[] GetOrDefault(TKey[] keys)
         {
-            return keys.Select(GetOrDefault).ToArray();
+            var results = TryGetValues(keys);
+            return results.Select(result => result.Value).ToArray();
         }
 
-        public virtual Task<TValue> GetOrDefaultAsync(TKey key)
+        public virtual async Task<TValue> GetOrDefaultAsync(TKey key)
         {
-            return Task.FromResult(GetOrDefault(key));
+            var result = await TryGetValueAsync(key);
+            return result.Value;
         }
 
-        public virtual Task<TValue[]> GetOrDefaultAsync(TKey[] keys)
+        public virtual async Task<TValue[]> GetOrDefaultAsync(TKey[] keys)
         {
-            return Task.WhenAll(keys.Select(GetOrDefaultAsync));
+            var results = await TryGetValuesAsync(keys);
+            return results.Select(result => result.Value).ToArray();
         }
 
-        public abstract void Set(TKey key, TValue value, TimeSpan? slidingExpireTime = null, TimeSpan? absoluteExpireTime = null);
+        public abstract void Set(TKey key, TValue value, TimeSpan? slidingExpireTime = null, DateTimeOffset? absoluteExpireTime = null);
 
-        public virtual void Set(KeyValuePair<TKey, TValue>[] pairs, TimeSpan? slidingExpireTime = null, TimeSpan? absoluteExpireTime = null)
+        public virtual void Set(KeyValuePair<TKey, TValue>[] pairs, TimeSpan? slidingExpireTime = null, DateTimeOffset? absoluteExpireTime = null)
         {
             foreach (var pair in pairs)
             {
@@ -285,13 +304,13 @@ namespace Abp.Runtime.Caching
             }
         }
 
-        public virtual Task SetAsync(TKey key, TValue value, TimeSpan? slidingExpireTime = null, TimeSpan? absoluteExpireTime = null)
+        public virtual Task SetAsync(TKey key, TValue value, TimeSpan? slidingExpireTime = null, DateTimeOffset? absoluteExpireTime = null)
         {
             Set(key, value, slidingExpireTime, absoluteExpireTime);
             return Task.CompletedTask;
         }
 
-        public virtual Task SetAsync(KeyValuePair<TKey, TValue>[] pairs, TimeSpan? slidingExpireTime = null, TimeSpan? absoluteExpireTime = null)
+        public virtual Task SetAsync(KeyValuePair<TKey, TValue>[] pairs, TimeSpan? slidingExpireTime = null, DateTimeOffset? absoluteExpireTime = null)
         {
             return Task.WhenAll(pairs.Select(p => SetAsync(p.Key, p.Value, slidingExpireTime, absoluteExpireTime)));
         }
